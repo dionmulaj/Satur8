@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satur8 — WiFi Security Monitor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
+</head>
+<body>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <img src="{{ url_for('static', filename='Satur8-logo.png') }}" alt="Satur8" class="brand-logo">
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section-label">MONITOR</div>
+            <a class="nav-item active" data-view="dashboard" href="#">
+                <span class="nav-label">Dashboard</span>
+            </a>
+            <a class="nav-item" data-view="alerts" href="#">
+                <span class="nav-label">Alerts</span>
+                <span class="nav-badge" id="navAlertBadge" style="display:none">0</span>
+            </a>
+            <a class="nav-item" data-view="clients" href="#">
+                <span class="nav-label">Clients</span>
+                <span class="nav-badge info-badge" id="navClientBadge" style="display:none">0</span>
+            </a>
+            <a class="nav-item" data-view="packets" href="#">
+                <span class="nav-label">Packets</span>
+            </a>
+            <a class="nav-item" data-view="wiki" href="#">
+                <span class="nav-label">Wiki</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-status">
+            <div class="sys-row">
+                <span class="sys-dot" id="sysDot"></span>
+                <span class="sys-label" id="sysStatusLabel">Offline</span>
+            </div>
+            <div class="sys-iface" id="sysIface">—</div>
+        </div>
+
+        <div class="sidebar-footer">
+        </div>
+    </aside>
+
+    <div class="main-area">
+
+        <header class="topbar">
+            <div class="topbar-left">
+                <span class="topbar-slash">/</span>
+                <span class="topbar-page" id="topbarPage">dashboard</span>
+                <div id="channelStrip" class="ch-strip" style="display:none">
+                    <span class="ch-label">CH</span>
+                    <strong id="channelNum">—</strong>
+                    <span class="ch-sep">·</span>
+                    <span class="ch-label">HOP</span>
+                    <strong id="hoppingStatus">—</strong>
+                </div>
+            </div>
+            <div class="topbar-center">
+                <div id="monitorWarning" class="topbar-warn" style="display:none">
+                    RFMON unavailable on <code id="warnIface">en0</code> — disconnect from WiFi &amp; restart with sudo
+                </div>
+                <span class="topbar-motto">Nightmare through the air.</span>
+            </div>
+            <div class="topbar-right">
+                <span id="status" class="status-chip">Initializing…</span>
+                <div class="topbar-baseline-toggle">
+                    <label class="toggle-label" for="baselineToggle">
+                        <input type="checkbox" id="baselineToggle" checked />
+                        <span class="toggle-text">Baseline</span>
+                    </label>
+                    <input class="baseline-dur-input" id="baselineDuration" type="number" min="30" max="3600" value="300" title="Baseline duration (seconds)" />
+                    <span class="baseline-dur-suffix">s</span>
+                </div>
+                <button id="btnToggle" class="btn-monitor start">START MONITOR</button>
+            </div>
+        </header>
+
+        <div class="view active" id="view-dashboard">
+            <div class="metrics-strip">
+                <div class="metric-tile">
+                    <div class="metric-val" id="packetCount">0</div>
+                    <div class="metric-lbl">Packets</div>
+                </div>
+                <div class="metric-tile danger">
+                    <div class="metric-val" id="alertCount">0</div>
+                    <div class="metric-lbl">Alerts</div>
+                </div>
+                <div class="metric-tile warn">
+                    <div class="metric-val" id="deauthCount">0</div>
+                    <div class="metric-lbl">Deauth</div>
+                </div>
+                <div class="metric-tile critical">
+                    <div class="metric-val" id="mitmCount">0</div>
+                    <div class="metric-lbl">MITM</div>
+                </div>
+                <div class="metric-tile info">
+                    <div class="metric-val" id="deviceCount">0</div>
+                    <div class="metric-lbl">Clients</div>
+                </div>
+                <div class="metric-tile pineapple">
+                    <div class="metric-val" id="pineappleCount">0</div>
+                    <div class="metric-lbl">Pineapple</div>
+                </div>
+            </div>
+
+            <div class="baseline-status-bar" id="baselineStatusBar" style="display:none">
+                <span class="baseline-status-text" id="baselineStatusText">Scanning environment…</span>
+                <div class="baseline-progress-bar-wrap" id="baselineProgressRow">
+                    <div class="baseline-progress-bar" id="baselineProgressBar" style="width:0%"></div>
+                </div>
+                <span class="baseline-countdown" id="baselineCountdown"></span>
+                <span class="baseline-ssid-count" id="baselineSsidCount" style="display:none"></span>
+            </div>
+
+            <div class="dash-grid">                <div class="dash-card">
+                    <div class="card-header">
+                        <span class="card-title">DEAUTH ATTACKS</span>
+                        <button class="card-action" id="btnClearDeauth">CLEAR</button>
+                    </div>
+                    <div id="deauthFeed" class="feed-list"></div>
+                    <div class="feed-empty" id="deauthEmpty">No deauth attacks detected</div>
+                </div>
+
+                <div class="dash-card">
+                    <div class="card-header">
+                        <span class="card-title">MITM ATTACKS</span>
+                        <button class="card-action" id="btnClearMitm">CLEAR</button>
+                    </div>
+                    <div id="mitmFeed" class="feed-list"></div>
+                    <div class="feed-empty" id="mitmEmpty">No MITM attacks detected</div>
+                </div>
+
+                <div class="dash-card">
+                    <div class="card-header">
+                        <span class="card-title">ROGUE AP</span>
+                        <button class="card-action" id="btnClearRogue">CLEAR</button>
+                    </div>
+                    <div id="rogueFeed" class="feed-list"></div>
+                    <div class="feed-empty" id="rogueEmpty">No rogue APs detected</div>
+                </div>
+            </div>
+
+            <div class="system-feed-card">
+                <div class="card-header">
+                    <span class="card-title">SYSTEM EVENTS</span>
+                    <button class="card-action" id="btnClearSystem">CLEAR</button>
+                </div>
+                <div id="systemFeed" class="feed-list"></div>
+                <div class="feed-empty" id="systemEmpty">No system events</div>
+            </div>
+
+            <div class="dash-card dash-info-card">
+                <div class="card-header">
+                    <span class="card-title">DETECTION INFO</span>
+                </div>
+                <div class="info-table-wrap">
+                    <table class="info-table info-table--horiz">
+                        <tr>
+                            <td class="ik">Interface</td><td class="iv" id="interface">—</td>
+                            <td class="ik">Active Src&#8594;Dst</td><td class="iv" id="deauthPairs">0</td>
+                            <td class="ik">Tracked MACs</td><td class="iv" id="trackedMacs">0</td>
+                            <td class="ik">SSIDs Tracked</td><td class="iv" id="ssidsTracked">0</td>
+                            <td class="ik">Wireless Threats</td><td class="iv" id="evilTwinsDetected">0</td>
+                            <td class="ik">Suspicious Devs</td><td class="iv" id="suspiciousDevices">0</td>
+                            <td class="ik">OUI Database</td><td class="iv" id="ouiDbStatus"><span style="color:var(--txt-mute)">—</span></td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="view" id="view-alerts">
+            <div class="view-topbar">
+                <span class="view-title">Security Alerts</span>
+                <button class="card-action" id="btnClearAlertsFull">CLEAR ALL</button>
+            </div>
+            <div id="alertsFeedFull" class="feed-list full-feed"></div>
+            <div class="feed-empty" id="alertsEmptyFull">No alerts detected</div>
+        </div>
+
+        <div class="view" id="view-clients">
+            <div class="view-topbar">
+                <span class="view-title">Discovered Clients</span>
+                <span class="view-count" id="clientCount">0 devices</span>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table" id="clientsTable">
+                    <colgroup>
+                        <col style="width:16%">
+                        <col style="width:17%">
+                        <col style="width:9%">
+                        <col style="width:16%">
+                        <col style="width:6%">
+                        <col style="width:10%">
+                        <col style="width:10%">
+                        <col style="width:12%">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th>MAC ADDRESS</th>
+                            <th>VENDOR</th>
+                            <th>ROLE</th>
+                            <th>SSIDs</th>
+                            <th>PKTS</th>
+                            <th>FIRST SEEN</th>
+                            <th>LAST SEEN</th>
+                            <th>STATUS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clientsBody"></tbody>
+                </table>
+                <div class="feed-empty" id="clientsEmpty">No clients discovered yet</div>
+            </div>
+        </div>
+
+        <div class="view" id="view-packets">
+            <div class="view-topbar">
+                <span class="view-title">Live Packet Feed</span>
+                <span class="view-count" id="packetCountFull">0 captured</span>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table" id="packetsTable">
+                    <!-- col widths: #  TYPE  SRC  DST  INFO  TIME -->
+                    <colgroup>
+                        <col style="width:5%">
+                        <col style="width:12%">
+                        <col style="width:18%">
+                        <col style="width:18%">
+                        <col style="width:35%">
+                        <col style="width:12%">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>TYPE</th>
+                            <th>SOURCE</th>
+                            <th>DESTINATION</th>
+                            <th>INFO</th>
+                            <th>TIME</th>
+                        </tr>
+                    </thead>
+                    <tbody id="packetsBody"></tbody>
+                </table>
+                <div class="feed-empty" id="packetsEmpty">No packets captured yet</div>
+            </div>
+        </div>
+
+        <div class="view" id="view-wiki">
+            <div class="view-topbar">
+                <span class="view-title">Wiki — Detection Reference</span>
+                <span class="wiki-ver-pill">Satur8 v1.0</span>
+            </div>
+            <div class="wiki-content">
+
+                <div class="wiki-section">
+                    <div class="wiki-section-header">Detection Categories</div>
+                    <table class="wiki-table">
+                        <tr>
+                            <td><span class="wiki-badge red">DEAUTH_ATTACK</span></td>
+                            <td>Detects 802.11 deauthentication frame floods. An attacker sends forged deauth frames to forcibly disconnect legitimate clients from their access point — a prerequisite for many credential-capture and handshake-collection attacks.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge magenta">ARP_SPOOFING</span></td>
+                            <td>Identifies ARP cache poisoning where two different MAC addresses claim ownership of the same IP address. Classic MITM setup — the attacker inserts themselves between a victim and the gateway to intercept or modify traffic.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge yellow">ARP_FLOOD</span></td>
+                            <td>Raised when a single MAC address sends an abnormally high volume of ARP requests within a short window. May indicate network reconnaissance, a misconfigured device, or a denial-of-service tool. A one-time-window grace period on startup prevents false positives from interface buffer flushes.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge purple">EVIL_TWIN</span></td>
+                            <td>Detects rogue access points advertising a known SSID from a different BSSID (MAC address). Attackers use evil twins to lure clients into connecting to a controlled AP where all traffic can be intercepted. A baseline scan establishes trusted SSID→BSSID mappings before alerting.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge orange">KARMA_ATTACK</span></td>
+                            <td>Flags an AP that responds to multiple distinct probe requests with matching beacons, impersonating whatever SSID a client is looking for. Used by rogue APs (e.g. WiFi Pineapple) to automatically trap devices that broadcast previously joined networks.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge cyan">ROGUE_BEACON</span></td>
+                            <td>An access point is broadcasting beacons for an SSID that was never seen during the baseline environment scan. May indicate a newly deployed rogue AP attempting to blend in with the environment after the baseline was collected.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge orange">PINEAPPLE_MULTI_SSID</span></td>
+                            <td>A single BSSID is broadcasting beacons for an unusually large number of distinct SSIDs simultaneously — a behavior characteristic of WiFi Pineapple devices operating in PineAP/broadcast mode.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge orange">SUSPICIOUS_DEVICE</span></td>
+                            <td>A discovered client's MAC OUI matches a known offensive hardware vendor (e.g. Hak5 / WiFi Pineapple families). The OUI database is loaded from <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">oui.txt</code> at startup.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge blue">SUSPICIOUS_SSID</span></td>
+                            <td>Beacon or probe contains an SSID matching known attack tool defaults or suspicious patterns (e.g. "Pineapple", "Evil Twin", default Karma SSID names).</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge green">BASELINE_COMPLETE</span></td>
+                            <td>Informational notice emitted when the baseline environment scan finishes. The collected SSID→BSSID mappings are saved to disk and used as the trusted reference for subsequent Evil Twin and Rogue Beacon detection.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge cyan">SCAN_STARTED</span></td>
+                            <td>Emitted each time packet capture begins. Records the capture interface, current channel, platform, and whether channel hopping is active. Useful for auditing when monitoring sessions were started.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge" style="color:var(--txt-dim);background:rgba(122,135,153,0.12);border-color:rgba(122,135,153,0.28)">SCAN_STOPPED</span></td>
+                            <td>Emitted when monitoring is stopped. Includes session duration and total packets captured — provides a quick summary of each monitoring session.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge orange">MONITOR_MODE_FALLBACK</span></td>
+                            <td>Fired when the capture interface cannot be opened in monitor mode and Satur8 falls back to standard promiscuous capture. In this degraded state, 802.11 management frames (Beacons, Deauths, Probe Requests) will not be visible, disabling most wireless attack detection. Action: disconnect from WiFi and run with <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">sudo</code>.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge green">OUI_DB_LOADED</span></td>
+                            <td>Confirms the OUI vendor database loaded successfully at scan start. Reports the number of entries available for vendor identification and the file path used.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="wiki-badge yellow">OUI_DB_MISSING</span></td>
+                            <td>The <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">oui.txt</code> database was not found in the project root. Vendor names will show as "Unknown" and OUI-based suspicious device detection will be unavailable. Place <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">oui.txt</code> in the project root and restart.</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <div class="wiki-section">
+                    <div class="wiki-section-header">How It Works</div>
+                    <table class="wiki-table">
+                        <tr>
+                            <td>Packet Capture</td>
+                            <td>Satur8 uses <strong>Scapy</strong> to sniff raw 802.11 and ARP frames from a wireless interface placed in <em>monitor mode</em>. On macOS, libpcap via <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">conf.use_pcap = True</code> is used; on Linux, standard raw socket capture applies.</td>
+                        </tr>
+                        <tr>
+                            <td>Baseline Scan</td>
+                            <td>Before threat detection begins, an optional baseline scan (default 300 s) observes the local RF environment and builds a map of trusted SSID→BSSID associations. This reduces false positives for Evil Twin detection in dense Wi-Fi areas. The baseline is persisted to <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">baseline.json</code> and reloaded on each run.</td>
+                        </tr>
+                        <tr>
+                            <td>Thresholds</td>
+                            <td>Detection thresholds are configurable via environment variables: <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">ARP_THRESHOLD</code> (default 200 req/10 s), <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">DEAUTH_THRESHOLD</code> (default 15 frames/10 s). All settings live in <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">config.py</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>OUI Lookup</td>
+                            <td>A local <code style="font-family:var(--mono);font-size:0.9em;color:var(--cyan)">oui.txt</code> database maps MAC prefixes to vendor names, enabling vendor-based device identification and suspicious-hardware flagging without any external API calls.</td>
+                        </tr>
+                        <tr>
+                            <td>Real-time UI</td>
+                            <td>Alerts, packet feeds, and device tables are pushed to the browser over <strong>WebSocket</strong> (Socket.IO) so the dashboard updates live without polling.</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Author -->
+                <div class="wiki-section">
+                    <div class="wiki-section-header">Author</div>
+                    <div class="wiki-author-block">
+                        <div class="wiki-author-info">
+                            <div class="wiki-author-name">Dion Mulaj <span class="wiki-author-handle">Th3May3m</span></div>
+                            <div class="wiki-author-role">Offensive Cybersecurity Engineer</div>
+                            <div class="wiki-author-socials">
+                                <span class="wiki-social-label">Socials</span>
+                                <a class="wiki-social-link" href="https://github.com/dionmulaj" target="_blank" rel="noopener noreferrer">
+                                    <span class="wiki-social-platform">GitHub</span>
+                                    <span class="wiki-social-url">github.com/dionmulaj</span>
+                                </a>
+                                <a class="wiki-social-link" href="https://linkedin.com/in/dion-mulaj" target="_blank" rel="noopener noreferrer">
+                                    <span class="wiki-social-platform">LinkedIn</span>
+                                    <span class="wiki-social-url">linkedin.com/in/dion-mulaj</span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <footer class="app-footer">
+            <span class="footer-tagline"></span>
+            <span class="footer-ver">Satur8 v1.0</span>
+        </footer>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
